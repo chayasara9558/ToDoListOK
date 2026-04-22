@@ -23,7 +23,7 @@ public class ToDoDbContext : DbContext
                 var pass = Environment.GetEnvironmentVariable("MYSQL_ADDON_PASSWORD") ?? "your_password";
                 var port = Environment.GetEnvironmentVariable("MYSQL_ADDON_PORT") ?? "3306";
 
-                connectionString = $"Server={host};Port={port};Database={db};Uid={user};Pwd={pass};SSL Mode=Required;TrustServerCertificate=True;";
+               connectionString = "Server=bw1bakzx73rboxvesscz-mysql.services.clever-cloud.com;Port=3306;Database=bw1bakzx73rboxvesscz;Uid=uts8ff6pttoii74s;Pwd=ohgb7uTFhP8cDbCTZA9y;SslMode=Required;TrustServerCertificate=True;AllowPublicKeyRetrieval=True;";
             }
             
             var serverVersion = new MySqlServerVersion(new Version(8, 0, 30)); 
