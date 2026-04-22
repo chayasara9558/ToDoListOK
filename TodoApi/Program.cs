@@ -9,12 +9,11 @@ using System.Security.Claims;
 var builder = WebApplication.CreateBuilder(args);
 
 // --- 1. הגדרות שירותים (Services) ---
-app.UseDefaultFiles(); // מחפש index.html
-app.UseStaticFiles();  // מאפשר להגיש קבצי JS/CSS
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll",
-        policy => policy.WithOrigins("https://todo-frontend-uawb.onrender.com", "http://localhost:3000") // הוספתי תמיכה גם בלוקאלי
+        policy => policy.AllowAnyOrigin() // במצב ששניהם באותו שרת, זה פחות קריטי אבל עוזר לבדיקות
                         .AllowAnyMethod()
                         .AllowAnyHeader());
 });
@@ -23,7 +22,7 @@ builder.Services.AddDbContext<ToDoDbContext>();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// מפתח סודי ל-JWT - מומלץ בעתיד להעביר למשתנה סביבה
+// מפתח סודי ל-JWT
 var key = Encoding.ASCII.GetBytes("A_Very_Long_Secret_Key_For_My_Todo_App_123!");
 
 builder.Services.AddAuthentication(options =>
@@ -48,21 +47,25 @@ var app = builder.Build();
 
 // --- 2. הגדרות Pipeline (Middleware) ---
 
-// ניסיון יצירת טבלאות עם טיפול בשגיאות למניעת קריסת השרת בענן
+// הגדרות להגשת ה-React מתוך תיקיית wwwroot
+app.UseDefaultFiles(); 
+app.UseStaticFiles();
+
+// ניסיון יצירת טבלאות עם טיפול בשגיאות
 using (var scope = app.Services.CreateScope())
 {
     try 
     {
         var db = scope.ServiceProvider.GetRequiredService<ToDoDbContext>();
         db.Database.ExecuteSqlRaw(@"
-            CREATE TABLE IF NOT EXISTS users (
+            CREATE TABLE IF NOT EXISTS Users (
                 Id INT AUTO_INCREMENT PRIMARY KEY,
                 Username VARCHAR(255) NOT NULL,
                 Password VARCHAR(255) NOT NULL
             );
         ");
         db.Database.ExecuteSqlRaw(@"
-            CREATE TABLE IF NOT EXISTS items (
+            CREATE TABLE IF NOT EXISTS Items (
                 Id INT AUTO_INCREMENT PRIMARY KEY,
                 Name VARCHAR(255),
                 IsComplete TINYINT(1),
@@ -73,7 +76,6 @@ using (var scope = app.Services.CreateScope())
     }
     catch (Exception ex)
     {
-        // מדפיס את השגיאה ללוגים של Render במקום להקריס את השרת
         Console.WriteLine($"Database migration failed: {ex.Message}");
     }
 }
@@ -87,7 +89,8 @@ app.UseAuthorization();
 
 // --- 3. נתיבים (Routes) ---
 
-app.MapGet("/", () => "API is Running!");
+// חשוב: אם ה-React לא נטען, הנתיב הזה יוודא שה-API חי
+app.MapGet("/health", () => "API is Running!");
 
 // הרשמה (Register)
 app.MapPost("/register", async (ToDoDbContext db, User newUser) =>
@@ -166,5 +169,8 @@ app.MapDelete("/items/{id}", async (ToDoDbContext db, int id, ClaimsPrincipal us
     await db.SaveChangesAsync();
     return Results.Ok(new { message = "Deleted", id });
 }).RequireAuthorization();
+
+// פתרון לבעיית ה-Refresh ב-React: כל נתיב לא מזוהה יחזיר את index.html
+app.MapFallbackToFile("index.html");
 
 app.Run();
