@@ -10,23 +10,19 @@ var builder = WebApplication.CreateBuilder(args);
 
 // --- 1. הגדרות שירותים (Services) ---
 
-// הגדרת CORS - מאפשר ל-React לתקשר עם השרת
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll",
-        policy => policy.WithOrigins("https://todo-frontend-uawb.onrender.com")
+        policy => policy.WithOrigins("https://todo-frontend-uawb.onrender.com", "http://localhost:3000") // הוספתי תמיכה גם בלוקאלי
                         .AllowAnyMethod()
                         .AllowAnyHeader());
 });
 
-// הזרקת ה-DbContext
 builder.Services.AddDbContext<ToDoDbContext>();
-
-// הגדרת Swagger
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// מפתח סודי ל-JWT
+// מפתח סודי ל-JWT - מומלץ בעתיד להעביר למשתנה סביבה
 var key = Encoding.ASCII.GetBytes("A_Very_Long_Secret_Key_For_My_Todo_App_123!");
 
 builder.Services.AddAuthentication(options =>
@@ -51,31 +47,39 @@ var app = builder.Build();
 
 // --- 2. הגדרות Pipeline (Middleware) ---
 
-// מוודא שבסיס הנתונים והטבלאות קיימים בענן
+// ניסיון יצירת טבלאות עם טיפול בשגיאות למניעת קריסת השרת בענן
 using (var scope = app.Services.CreateScope())
 {
-    var db = scope.ServiceProvider.GetRequiredService<ToDoDbContext>();
-    db.Database.ExecuteSqlRaw(@"
-        CREATE TABLE IF NOT EXISTS users (
-            Id INT AUTO_INCREMENT PRIMARY KEY,
-            Username VARCHAR(255) NOT NULL,
-            Password VARCHAR(255) NOT NULL
-        );
-    ");
-    db.Database.ExecuteSqlRaw(@"
-        CREATE TABLE IF NOT EXISTS items (
-            Id INT AUTO_INCREMENT PRIMARY KEY,
-            Name VARCHAR(255),
-            IsComplete TINYINT(1),
-            UserId INT
-        );
-    ");
+    try 
+    {
+        var db = scope.ServiceProvider.GetRequiredService<ToDoDbContext>();
+        db.Database.ExecuteSqlRaw(@"
+            CREATE TABLE IF NOT EXISTS users (
+                Id INT AUTO_INCREMENT PRIMARY KEY,
+                Username VARCHAR(255) NOT NULL,
+                Password VARCHAR(255) NOT NULL
+            );
+        ");
+        db.Database.ExecuteSqlRaw(@"
+            CREATE TABLE IF NOT EXISTS items (
+                Id INT AUTO_INCREMENT PRIMARY KEY,
+                Name VARCHAR(255),
+                IsComplete TINYINT(1),
+                UserId INT
+            );
+        ");
+        Console.WriteLine("Database tables checked/created successfully.");
+    }
+    catch (Exception ex)
+    {
+        // מדפיס את השגיאה ללוגים של Render במקום להקריס את השרת
+        Console.WriteLine($"Database migration failed: {ex.Message}");
+    }
 }
-// הפעלת Swagger
+
 app.UseSwagger();
 app.UseSwaggerUI();
 
-// חשוב: UseCors חייב להיות לפני Authentication ו-Authorization
 app.UseCors("AllowAll");
 app.UseAuthentication();
 app.UseAuthorization();
@@ -87,7 +91,9 @@ app.MapGet("/", () => "API is Running!");
 // הרשמה (Register)
 app.MapPost("/register", async (ToDoDbContext db, User newUser) =>
 {
-    // בדיקה בסיסית אם המשתמש כבר קיים
+    if (string.IsNullOrEmpty(newUser.Username) || string.IsNullOrEmpty(newUser.Password))
+        return Results.BadRequest(new { message = "Username and password are required" });
+
     var exists = await db.Users.AnyAsync(u => u.Username == newUser.Username);
     if (exists) return Results.BadRequest(new { message = "Username already exists" });
 
@@ -99,11 +105,6 @@ app.MapPost("/register", async (ToDoDbContext db, User newUser) =>
 // התחברות (Login)
 app.MapPost("/login", async (ToDoDbContext db, User loginUser) =>
 {
-    if (string.IsNullOrWhiteSpace(loginUser.Username) || string.IsNullOrWhiteSpace(loginUser.Password))
-    {
-        return Results.BadRequest(new { message = "Username and password are required" });
-    }
-
     var user = await db.Users.FirstOrDefaultAsync(u => 
         u.Username == loginUser.Username && u.Password == loginUser.Password);
     
@@ -124,14 +125,14 @@ app.MapPost("/login", async (ToDoDbContext db, User loginUser) =>
     return Results.Ok(new { token = tokenHandler.WriteToken(token) });
 });
 
-// שליפת משימות של המשתמש המחובר
+// שליפת משימות
 app.MapGet("/items", async (ToDoDbContext db, ClaimsPrincipal user) =>
 {
-    var userId = user.FindFirst("id")?.Value;
-    if (userId == null) return Results.Unauthorized();
+    var userIdClaim = user.FindFirst("id")?.Value;
+    if (userIdClaim == null) return Results.Unauthorized();
 
     var userTasks = await db.Items
-        .Where(t => t.UserId == int.Parse(userId))
+        .Where(t => t.UserId == int.Parse(userIdClaim))
         .ToListAsync();
 
     return Results.Ok(userTasks);
@@ -140,10 +141,10 @@ app.MapGet("/items", async (ToDoDbContext db, ClaimsPrincipal user) =>
 // הוספת משימה
 app.MapPost("/items", async (ToDoDbContext db, Item newItem, ClaimsPrincipal user) =>
 {
-    var userId = user.FindFirst("id")?.Value;
-    if (userId == null) return Results.Unauthorized();
+    var userIdClaim = user.FindFirst("id")?.Value;
+    if (userIdClaim == null) return Results.Unauthorized();
 
-    newItem.UserId = int.Parse(userId);
+    newItem.UserId = int.Parse(userIdClaim);
     db.Items.Add(newItem);
     await db.SaveChangesAsync();
     return Results.Created($"/items/{newItem.Id}", newItem);
@@ -152,13 +153,13 @@ app.MapPost("/items", async (ToDoDbContext db, Item newItem, ClaimsPrincipal use
 // מחיקת משימה
 app.MapDelete("/items/{id}", async (ToDoDbContext db, int id, ClaimsPrincipal user) =>
 {
-    var userId = user.FindFirst("id")?.Value;
-    if (userId == null) return Results.Unauthorized();
+    var userIdClaim = user.FindFirst("id")?.Value;
+    if (userIdClaim == null) return Results.Unauthorized();
 
     var item = await db.Items.FindAsync(id);
     if (item is null) return Results.NotFound();
     
-    if (item.UserId != int.Parse(userId)) return Results.Forbid();
+    if (item.UserId != int.Parse(userIdClaim)) return Results.Forbid();
 
     db.Items.Remove(item);
     await db.SaveChangesAsync();
