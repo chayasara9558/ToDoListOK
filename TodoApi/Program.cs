@@ -9,7 +9,8 @@ using System.Security.Claims;
 var builder = WebApplication.CreateBuilder(args);
 
 // --- 1. הגדרות שירותים (Services) ---
-
+app.UseDefaultFiles(); // מחפש index.html
+app.UseStaticFiles();  // מאפשר להגיש קבצי JS/CSS
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll",
