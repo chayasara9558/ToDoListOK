@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const apiUrl = "https://todolistok.onrender.com";// 1. הזרקת הטוקן לכל בקשה שיוצאת לשרת
+const apiUrl = ""// 1. הזרקת הטוקן לכל בקשה שיוצאת לשרת
 axios.interceptors.request.use(config => {
     const token = localStorage.getItem("token");
     if (token) {
